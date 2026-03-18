@@ -10,32 +10,34 @@
   
   library(tidyverse)
   library(janitor)
-  library(easystafe)
+  #library(easystafe)
   library(readxl)
   library(writexl)
   library(arrow)
-  #source("Scripts/utilities.R")
+  source("Scripts/utilities3.R")
+
 
 # GLOBAL VARIABLES --------------------------------------------------------
   
   ref_id <- "2833cef5"
   
   paths <- list.files(
-    path = "Data/eSISTAFE",
+    path = "Data/2025DecNew/",
     pattern = "\\.xls$",
     full.names = TRUE,
     ignore.case = TRUE
   )
   
-  bucket <- s3_bucket("giz-mec-data-joe", region = "eu-north-1")
+  #bucket <- s3_bucket("giz-mec-data-joe", region = "eu-north-1")
   
 # LOAD LOOKUP TABLES -------------------------------------------------------
   
   # Load lookup table for education UGB and other metadata
-  dim_ugb <- read_excel("Documents/xxx_Orcamento_DB_ficheiro branco.xlsm",
-                        sheet = "Organica da Educação") %>% 
+  dim_ugb <- read_excel("Documents/OrganicaEducação_20260211.xlsx",
+                        sheet = "Sheet1") %>% 
     clean_names() %>% 
-    select(codigo_ugb:nivel_da_instituicao)
+    select(codigo_ugb:nivel_da_instituicao) %>% 
+    mutate(distrito = str_to_title(distrito))
   
   # Create a vector of valid UGB IDs to filter the main budget file
   vec_ugb <- dim_ugb %>% 
@@ -44,22 +46,58 @@
   
   # Load lookup table for expense type
   dim_ced <- read_excel(
-    "Documents/OrganicaEducação.xlsx",
-    sheet = "ced_desc",
+    "Documents/OrganicaEducação_20260211.xlsx",
+    sheet = "ReferenciaNomes",
+    skip = 1,
     col_types = "text"
   ) %>% 
     clean_names() %>%
+    select(
+      ced = codigo,
+      ced_desc = designacao
+    ) %>% 
+    filter(!is.na(ced)) %>% 
     mutate(
       ced = str_replace(ced, "\\.0+$", "")   # strip trailing .0 etc
     )
+
+  
+  # Load lookup table for expense type
+  # dim_ced <- read_excel(
+  #   "Documents/OrganicaEducação.xlsx",
+  #   sheet = "ced_desc",
+  #   col_types = "text"
+  # ) %>% 
+  #   clean_names() %>%
+  #   mutate(
+  #     ced = str_replace(ced, "\\.0+$", "")   # strip trailing .0 etc
+  #   )
   
   # Load lookup table for budget source
+  # dim_fr <- read_excel(
+  #   "Documents/OrganicaEducação.xlsx",
+  #   sheet = "fr_desc",
+  #   col_types = "text"
+  # ) %>%
+  #   clean_names()
+  
+  # Load lookup table for expense type
   dim_fr <- read_excel(
-    "Documents/OrganicaEducação.xlsx",
-    sheet = "fr_desc",
+    "Documents/OrganicaEducação_20260211.xlsx",
+    sheet = "ReferenciaNomes",
+    skip = 1,
     col_types = "text"
   ) %>% 
-    clean_names()
+    clean_names() %>%
+    select(
+      fr = codigo_receita,
+      fr_nome = tipo_receita,
+      fr_modalidade = financiador
+    ) %>% 
+    mutate(
+      fr = str_replace(fr, "\\.0+$", "")   # strip trailing .0 etc
+    ) %>% 
+    filter(!is.na(fr))
   
   lookup_list <- list(
     ugb = dim_ugb,
@@ -73,11 +111,15 @@
 # MUNGE -------------------------------------------------------------------
   
   
+  ##### add district, province, and institution in dataset
+  ##### add ced 3/4
+  
   df <- processar_esistafe_extracto(paths, vec_ugb)
 
   df_final <- df %>% 
     left_join(lookup_list$ugb, by = c("ugb_id" = "codigo_ugb")) %>%
     left_join(lookup_list$ced, by = "ced") %>% 
+    left_join(lookup_list$fr, by = "fr") %>% 
     relocate(ced_desc, .after = ced) %>% 
     mutate(across(
       c(provincia, distrito),
@@ -93,11 +135,16 @@
       ano,
       mes,
       ugb_id,
+      ugb,
       funcao,
       programa,
       fr,
+      fr_nome,
+      fr_modalidade,
       ced,
       ced_desc,
+      ced_base_3,
+      ced_base_4,
       nivel_da_instituicao,
       ambito,
       provincia,
@@ -135,4 +182,9 @@
   )
   
   write_parquet(df_final, bucket$path("esistafe.parquet"))
+  
+  
+  
+  
+  
   
